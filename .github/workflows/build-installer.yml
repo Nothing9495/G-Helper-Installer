@@ -26,6 +26,11 @@ jobs:
     name: Build and publish
     runs-on: windows-2022
 
+    # The secrets context is not available in a step level if condition, so signing
+    # is gated through the environment instead.
+    env:
+      SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+
     steps:
       # fetch-tags must stay false: this repo shares tag names with upstream and
       # must never import upstream refs.
@@ -106,7 +111,7 @@ jobs:
       # artifact by id, so the upload step is not optional decoration.
       - name: Upload the unsigned installer
         id: upload-unsigned
-        if: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        if: ${{ env.SIGNPATH_API_TOKEN != '' }}
         uses: actions/upload-artifact@v7
         with:
           name: GHelper-unsigned
@@ -114,7 +119,7 @@ jobs:
 
       - name: Sign the installer
         id: sign
-        if: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        if: ${{ env.SIGNPATH_API_TOKEN != '' }}
         uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
