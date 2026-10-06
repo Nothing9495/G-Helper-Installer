@@ -174,7 +174,7 @@ public class Startup
         }
     }
 
-    public static void Schedule()
+    public static void Schedule(bool quiet = false)
     {
 
         using (TaskDefinition td = TaskService.Instance.NewTask())
@@ -202,7 +202,7 @@ public class Startup
             catch (Exception ex)
             {
                 Logger.WriteLine("Can't create startup task: " + ex.Message);
-                if (ProcessHelper.IsUserAdministrator())
+                if (!quiet && ProcessHelper.IsUserAdministrator())
                     MessageBox.Show("Can't create a start up task. Try running Task Scheduler by hand and manually deleting GHelper task if it exists there.", "Scheduler Error", MessageBoxButtons.OK);
                 else
                     ProcessHelper.RunAsAdmin();
@@ -213,7 +213,7 @@ public class Startup
 
     }
 
-    public static void UnSchedule()
+    public static void UnSchedule(bool quiet = false)
     {
         using (TaskService taskService = new TaskService())
         {
@@ -224,7 +224,7 @@ public class Startup
             }
             catch (Exception)
             {
-                if (ProcessHelper.IsUserAdministrator())
+                if (!quiet && ProcessHelper.IsUserAdministrator())
                     MessageBox.Show("Can't remove task. Try running Task Scheduler by hand and manually deleting GHelper task if it exists there.", "Scheduler Error", MessageBoxButtons.OK);
                 else
                     ProcessHelper.RunAsAdmin();

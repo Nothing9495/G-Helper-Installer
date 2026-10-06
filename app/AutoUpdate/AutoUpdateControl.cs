@@ -12,7 +12,7 @@ namespace GHelper.AutoUpdate
 
         SettingsForm settings;
 
-        public string versionUrl = "https://github.com/seerge/g-helper/releases";
+        public string versionUrl = "https://github.com/Nothing9495/G-Helper-Installer/releases";
         public bool update = false;
 
         static long lastUpdate;
@@ -74,21 +74,31 @@ namespace GHelper.AutoUpdate
                 using (var httpClient = new HttpClient())
                 {
                     httpClient.DefaultRequestHeaders.Add("User-Agent", "G-Helper App");
-                    var json = await httpClient.GetStringAsync("https://api.github.com/repos/seerge/g-helper/releases/latest");
+                    var json = await httpClient.GetStringAsync("https://api.github.com/repos/Nothing9495/G-Helper-Installer/releases/latest");
                     var config = JsonSerializer.Deserialize<JsonElement>(json);
-                    var tag = config.GetProperty("tag_name").ToString().Replace("v", "");
+                    var tagName = config.GetProperty("tag_name").ToString();
+                    var tag = tagName.Replace("v", "");
                     var assets = config.GetProperty("assets");
 
+                    // The release workflow names the asset deterministically, so match it
+                    // exactly instead of guessing. Falling back to assets[0] could select a
+                    // checksum file, and that must never be executed.
+                    string expectedAsset = $"GHelper-{tagName}-Setup.exe";
                     string url = null;
 
                     for (int i = 0; i < assets.GetArrayLength(); i++)
                     {
-                        if (assets[i].GetProperty("browser_download_url").ToString().Contains(".zip"))
-                            url = assets[i].GetProperty("browser_download_url").ToString();
+                        var assetUrl = assets[i].GetProperty("browser_download_url").ToString();
+                        if (assetUrl.EndsWith(expectedAsset, StringComparison.OrdinalIgnoreCase))
+                            url = assetUrl;
                     }
 
                     if (url is null)
-                        url = assets[0].GetProperty("browser_download_url").ToString();
+                    {
+                        Logger.WriteLine($"No {expectedAsset} asset in release {tagName}");
+                        LoadReleases();
+                        return;
+                    }
 
                     var gitVersion = new Version(tag);
                     var appVersion = new Version(Assembly.GetExecutingAssembly().GetName().Version.ToString());
@@ -139,14 +149,7 @@ namespace GHelper.AutoUpdate
         async void AutoUpdate(string requestUri)
         {
 
-            Uri uri = new Uri(requestUri);
-            string zipName = Path.GetFileName(uri.LocalPath);
-
-            string exeLocation = Application.ExecutablePath;
-            string exeDir = Path.GetDirectoryName(exeLocation);
-            //exeDir = "C:\\Program Files\\GHelper";
-            string exeName = Path.GetFileName(exeLocation);
-            string zipLocation = exeDir + "\\" + zipName;
+            string exeDir = Path.GetDirectoryName(Application.ExecutablePath) ?? ""; string setupLocation = Path.Combine(Path.GetTempPath(), "GHelper-Setup.exe");
 
             using (HttpClient client = new HttpClient())
             {
@@ -154,14 +157,13 @@ namespace GHelper.AutoUpdate
                 client.DefaultRequestHeaders.Add("User-Agent", "G-Helper App");
                 Logger.WriteLine(requestUri);
                 Logger.WriteLine(exeDir);
-                Logger.WriteLine(zipName);
-                Logger.WriteLine(exeName);
+                Logger.WriteLine(setupLocation);
 
                 try
                 {
-                    var bytes = await client.GetByteArrayAsync(uri);
-                    File.WriteAllBytes(zipLocation, bytes);
-                    Logger.WriteLine($"Downloaded {bytes.Length}b: {zipLocation} (exists={File.Exists(zipLocation)}, size={new FileInfo(zipLocation).Length})");
+                    var bytes = await client.GetByteArrayAsync(requestUri);
+                    File.WriteAllBytes(setupLocation, bytes);
+                    Logger.WriteLine($"Downloaded {bytes.Length}b: {setupLocation} (exists={File.Exists(setupLocation)}, size={new FileInfo(setupLocation).Length})");
                 }
                 catch (Exception ex)
                 {
@@ -177,23 +179,19 @@ namespace GHelper.AutoUpdate
                     return;
                 }
 
-                string command = $"$ErrorActionPreference = \"Stop\"; Set-Location -Path '{EscapeString(exeDir)}'; Wait-Process -Name \"GHelper\"; Expand-Archive \"{zipName}\" -DestinationPath . -Force; Remove-Item \"{zipName}\" -Force; \".\\{exeName}\"; ";
-                Logger.WriteLine(command);
-
                 try
                 {
-                    var cmd = new Process();
-                    cmd.StartInfo.WorkingDirectory = exeDir;
-                    cmd.StartInfo.UseShellExecute = false;
-                    cmd.StartInfo.CreateNoWindow = true;
-                    cmd.StartInfo.FileName = "powershell";
-                    cmd.StartInfo.Arguments = command;
-                    if (ProcessHelper.IsUserAdministrator()) cmd.StartInfo.Verb = "runas";
-                    cmd.Start();
+                    Process.Start(new ProcessStartInfo(setupLocation)
+                    {
+                        UseShellExecute = true,
+                        Verb = "runas",
+                        WorkingDirectory = exeDir
+                    });
                 }
                 catch (Exception ex)
                 {
                     Logger.WriteLine(ex.Message);
+                    LoadReleases();
                 }
 
                 Application.Exit();

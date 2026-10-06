@@ -229,6 +229,14 @@ public static class AppConfig
         timer.Start();
     }
 
+    // Persists pending changes immediately instead of waiting for the debounce timer.
+    // Required by short lived headless commands that exit before the timer fires.
+    public static void Flush()
+    {
+        timer.Stop();
+        Timer_Elapsed(null, null);
+    }
+
     public static void Set(string name, int value)
     {
         lock (configLock) config[name] = value;

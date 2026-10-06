@@ -53,6 +53,8 @@ namespace GHelper
             string action = "";
             if (args.Length > 0) action = args[0];
 
+            if (ServiceCli.TryRun(args)) return;
+
             if (action == "charge")
             {
                 Charge();
