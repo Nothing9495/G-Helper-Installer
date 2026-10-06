@@ -1,0 +1,170 @@
+name: build-installer
+
+# Release pipeline. Triggered by pushing a v* tag; the tag is both the source of
+# truth for the version and the name of the GitHub Release.
+#
+# Branch merging is deliberately absent here. Choosing a window, resolving
+# conflicts and tagging are all manual (see docs/installer/git-manual.md), and
+# this workflow only builds and publishes.
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to rebuild and publish'
+        required: true
+
+permissions:
+  contents: write
+  attestations: write
+  id-token: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: windows-2022
+
+    steps:
+      # fetch-tags must stay false: this repo shares tag names with upstream and
+      # must never import upstream refs.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: false
+
+      - name: Resolve tag
+        id: tag
+        shell: pwsh
+        run: |
+          $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $env:GITHUB_REF_NAME
+          } else {
+            '${{ inputs.tag }}'
+          }
+          if (-not $tag -or $tag -notmatch '^v\d+\.\d+$') {
+            throw "Tag '$tag' is not in the required v<major>.<minor> form."
+          }
+          "value=$tag" >> $env:GITHUB_OUTPUT
+          Write-Host "Building $tag"
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      # Only tags that live on installer-release may produce a release. This sits
+      # on top of the main ruleset: the ruleset stops a tag being created there,
+      # this stops one that was created elsewhere from being published. Needs the
+      # full history, hence fetch-depth 0 above.
+      - name: Verify the tag lives on installer-release
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.tag.outputs.value }}'
+          git fetch --no-tags origin `
+            '+refs/heads/installer-release:refs/remotes/origin/installer-release'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not fetch installer-release' }
+          $sha = (git rev-parse "refs/tags/$tag").Trim()
+          if ($sha -notmatch '^[0-9a-f]{40}$') { throw "Cannot resolve tag $tag" }
+          git merge-base --is-ancestor $sha refs/remotes/origin/installer-release
+          if ($LASTEXITCODE -ne 0) {
+            throw "Tag $tag ($sha) is not on installer-release. Release tags may only be cut there."
+          }
+          Write-Host "Tag $tag ($sha) is on installer-release"
+
+      # Pinned to the same major version used locally. Chocolatey only carries
+      # Inno Setup 6, and compiling the same script under two major versions is a
+      # risk nobody needs. Absolute path: a machine level install does not
+      # refresh PATH for later steps in this job.
+      - name: Install Inno Setup
+        id: inno
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe'
+          $file = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Invoke-WebRequest -Uri $url -OutFile $file
+          Start-Process -FilePath $file -Wait `
+            -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/ALLUSERS'
+          $iscc = Get-ChildItem -Path `
+            "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
+            "$env:LOCALAPPDATA\Programs\Inno Setup 7\ISCC.exe" `
+            -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $iscc) { throw 'ISCC.exe not found after installing Inno Setup' }
+          "path=$($iscc.FullName)" >> $env:GITHUB_OUTPUT
+          Write-Host "ISCC: $($iscc.FullName)"
+
+      # build.ps1 rejects a tag that does not match AssemblyVersion, which is the
+      # one release gate we keep. The gate for "the tag must live on
+      # installer-release" is enforced by the branch ruleset instead.
+      - name: Build
+        id: build
+        shell: pwsh
+        run: ./build.ps1 -Tag '${{ steps.tag.outputs.value }}' -Iscc '${{ steps.inno.outputs.path }}'
+
+      # Signing is opt in. Without the secret the job still completes and
+      # publishes, only the installer stays unsigned. SignPath signs a workflow
+      # artifact by id, so the upload step is not optional decoration.
+      - name: Upload the unsigned installer
+        id: upload-unsigned
+        if: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: GHelper-unsigned
+          path: dist/GHelper-${{ steps.tag.outputs.value }}-Setup.exe
+
+      - name: Sign the installer
+        id: sign
+        if: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ secrets.SIGNPATH_ORG_ID }}
+          project-slug: ${{ secrets.SIGNPATH_PROJECT }}
+          signing-policy-slug: ${{ secrets.SIGNPATH_POLICY }}
+          github-artifact-id: ${{ steps.upload-unsigned.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: ./signed
+
+      # The installer changed, so the checksums computed during the build are
+      # stale whenever signing ran. Recomputed unconditionally to keep one code
+      # path for both cases.
+      - name: Refresh checksums
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.tag.outputs.value }}'
+          $exe = if (${{ steps.sign.outputs.outcome }} -eq 'success') {
+            '.\signed\GHelper-' + "$tag" + '-Setup.exe'
+          } else {
+            '.\dist\GHelper-' + "$tag" + '-Setup.exe'
+          }
+          if (-not (Test-Path $exe)) { throw "Signed installer not found at $exe" }
+          Copy-Item $exe '.\dist\' -Force
+          $hash = (Get-FileHash -Algorithm SHA256 '.\dist\GHelper-' + "$tag" + '-Setup.exe').Hash.ToLower()
+          "$hash  $tag-Setup.exe" | Set-Content -Encoding ASCII '.\dist\SHA256SUMS.txt'
+          Write-Host "$hash  $tag-Setup.exe"
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.value }}
+        run: |
+          $assets = @(
+            ".\dist\GHelper-$env:TAG-Setup.exe",
+            '.\dist\SHA256SUMS.txt'
+          )
+          foreach ($a in $assets) { if (-not (Test-Path $a)) { throw "Missing $a" } }
+
+          if (gh release view $env:TAG 2>$null) {
+            Write-Host "Release $env:TAG already exists, replacing its assets."
+            gh release upload $env:TAG @assets --clobber
+          } else {
+            gh release create $env:TAG --title $env:TAG --generate-notes @assets
+          }
+
+      - name: Generate SLSA build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/GHelper-${{ steps.tag.outputs.value }}-Setup.exe
+            dist/SHA256SUMS.txt

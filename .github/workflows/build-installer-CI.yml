@@ -1,0 +1,77 @@
+name: build-installer-CI
+
+# Validation pipeline. Runs the exact same build.ps1 the release pipeline runs, so
+# a green run here means the release pipeline will compile too. It uploads the
+# installer as an artifact and never touches a release.
+
+on:
+  push:
+    branches: [installer-release]
+  pull_request:
+    branches: [installer-release]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build the installer
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+          fetch-tags: false
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+
+      # The push and pull_request triggers are already scoped to
+      # installer-release, so only workflow_dispatch can arrive from elsewhere.
+      # A pull_request is checked out as a synthetic merge ref, which is
+      # deliberately not an ancestor of the branch, so it is exempt.
+      - name: Verify the ref is installer-release
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_NAME -ne 'installer-release') {
+            throw "Ref '$env:GITHUB_REF_NAME' is not installer-release."
+          }
+
+      # Same pinned version as the release pipeline and as local development.
+      # See the comment in build-installer.yml for why it is not from choco.
+      - name: Install Inno Setup
+        id: inno
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe'
+          $file = Join-Path $env:RUNNER_TEMP 'innosetup.exe'
+          Invoke-WebRequest -Uri $url -OutFile $file
+          Start-Process -FilePath $file -Wait `
+            -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/ALLUSERS'
+          $iscc = Get-ChildItem -Path `
+            "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
+            "$env:LOCALAPPDATA\Programs\Inno Setup 7\ISCC.exe" `
+            -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $iscc) { throw 'ISCC.exe not found after installing Inno Setup' }
+          "path=$($iscc.FullName)" >> $env:GITHUB_OUTPUT
+
+      # No -Tag: build.ps1 derives v<AssemblyVersion> from the csproj, which is
+      # exactly the name the current build would be released under.
+      - name: Build
+        id: build
+        shell: pwsh
+        run: ./build.ps1 -Iscc '${{ steps.inno.outputs.path }}'
+
+      - name: Upload the installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: GHelper-installer-${{ github.run_number }}
+          path: |
+            dist/GHelper-*-Setup.exe
+            dist/SHA256SUMS.txt
+          retention-days: 14
+          if-no-files-found: error
