@@ -140,18 +140,28 @@ jobs:
         shell: pwsh
         run: |
           $tag = '${{ steps.tag.outputs.value }}'
-          # Pick the signed copy by probing for the file, not by testing the sign
-          # step's outcome. When SIGNPATH_API_TOKEN is absent that step is skipped
-          # and its outcome interpolates to an empty string, which would leave the
-          # line below as `if ( -eq 'success')` and fail to parse.
-          $signed = '.\signed\GHelper-' + "$tag" + '-Setup.exe'
-          $exe = if (Test-Path $signed) { $signed } else { '.\dist\GHelper-' + "$tag" + '-Setup.exe' }
-          Write-Host "Checksumming $exe"
-          if (-not (Test-Path $exe)) { throw "Installer not found at $exe" }
-          Copy-Item $exe '.\dist\' -Force
-          $hash = (Get-FileHash -Algorithm SHA256 '.\dist\GHelper-' + "$tag" + '-Setup.exe').Hash.ToLower()
-          "$hash  $tag-Setup.exe" | Set-Content -Encoding ASCII '.\dist\SHA256SUMS.txt'
-          Write-Host "$hash  $tag-Setup.exe"
+          $name = "GHelper-$tag-Setup.exe"
+          $dist = ".\dist\$name"
+
+          # Probe for the signed copy rather than testing the sign step's outcome.
+          # When SIGNPATH_API_TOKEN is absent that step is skipped and its outcome
+          # interpolates to an empty string, which used to leave an `if ( -eq ...)`
+          # line that could not parse.
+          $signed = ".\signed\$name"
+          if (Test-Path $signed) {
+            Copy-Item $signed $dist -Force
+            Write-Host "Using the signed installer."
+          } elseif (Test-Path $dist) {
+            Write-Host "No signed installer, publishing the unsigned build."
+          } else {
+            throw "Installer not found in .\signed\ or .\dist\ ($name)"
+          }
+
+          $hash = (Get-FileHash -Algorithm SHA256 $dist).Hash.ToLower()
+          # Must name the asset exactly as published, otherwise `sha256sum -c
+          # SHA256SUMS.txt` looks for a file that was never uploaded.
+          "$hash  $name" | Set-Content -Encoding ASCII '.\dist\SHA256SUMS.txt'
+          Write-Host "$hash  $name"
 
       - name: Publish the release
         shell: pwsh

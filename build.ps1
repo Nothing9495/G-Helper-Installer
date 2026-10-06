@@ -176,7 +176,9 @@ if (-not $SkipSetup) {
     Step 'Writing checksums'
     $sums = Join-Path $OutputDir 'SHA256SUMS.txt'
     $hash = (Get-FileHash -Algorithm SHA256 $setup).Hash.ToLower()
-    "$hash  $Tag-Setup.exe" | Set-Content -Encoding ASCII $sums
+    # Name the asset exactly as it is published. Listing "$Tag-Setup.exe" instead
+    # would make `sha256sum -c SHA256SUMS.txt` look for a file that was never built.
+    "$hash  $(Split-Path $setup -Leaf)" | Set-Content -Encoding ASCII $sums
 
     $sizeMb = [math]::Round((Get-Item $setup).Length / 1MB, 1)
     Write-Host ''
