@@ -10,6 +10,9 @@ name: build-installer
 on:
   push:
     tags: ['v*']
+  # No paths filter here on purpose. A tag points at a commit rather than a file
+  # diff, and path filters on a tag push can silently swallow the release.
+  # Publishing is a deliberate, infrequent act, so there is nothing to filter.
   workflow_dispatch:
     inputs:
       tag:

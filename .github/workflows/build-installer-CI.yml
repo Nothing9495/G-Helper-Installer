@@ -7,8 +7,22 @@ name: build-installer-CI
 on:
   push:
     branches: [installer-release]
+    # Documentation and repo housekeeping must not spend a 30 second installer
+    # build. Deliberately an ignore list rather than a paths allow list: a new
+    # build input added later still triggers CI until someone remembers to
+    # register it here.
+    #
+    # Note GitHub skips the run entirely when every path in a push is ignored.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.gitignore'
   pull_request:
     branches: [installer-release]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - '.gitignore'
   workflow_dispatch:
 
 permissions:
