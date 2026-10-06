@@ -33,6 +33,9 @@ bld/
 [Ll]og/
 [Ll]ogs/
 
+# Fork additions, not part of the upstream template
+dist/
+
 # Visual Studio 2015/2017 cache/options directory
 .vs/
 
