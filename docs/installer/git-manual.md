@@ -71,6 +71,8 @@ git log main --format="%H" --grep="^Version bump$" | ForEach-Object {
 
 输出即完整的「版本号 → SHA」映射表。使用 `AssemblyVersion` 而非提交信息作为版本号来源，因此不依赖提交信息格式的稳定性。
 
+只覆盖**本地 `main` 已知**的边界。要纳入尚未 fetch 的上游版本，先 `git fetch upstream && git merge --ff-only upstream/main`。
+
 示例输出：
 
 ```
@@ -155,7 +157,7 @@ done
 
 ```bash
 git merge --no-ff --no-edit \
-  -m "Merge upstream v0.287 (2ca868a0)" \
+  -m "Merge upstream tag v0.287 (2ca868a0)" \
   2ca868a0
 ```
 
@@ -207,7 +209,9 @@ git push origin v0.288
 ### 冲突处理原则
 
 - **我们的 overlay 优先** —— 这些改动是本 fork 的分发形态所必需。
-- 合并提交信息统一为 `Merge upstream vX.Y (<sha>)`，便于回溯。
+- 合并提交信息统一为 `Merge upstream tag vX.Y (<sha>)`，便于回溯。
+  **`tag` 一词不可省略** —— §8 的审计命令用 `--grep="Merge upstream tag"` 定位本 fork 的
+  merge commit；漏掉它会匹配到上游自带的 merge commit，或（更糟）静默返回空而无从察觉。
 - 启用 `rerere`，重复出现的冲突只解一次：
 
 ```bash
@@ -284,14 +288,37 @@ git commit
 
 ## 8. 发布流程与门禁
 
-`build-installer.yml` 在发布前执行三重校验，任一失败即中止：
+`build-installer.yml` 在发布前执行两项校验，任一失败即中止：
 
-1. **版本一致** —— `tag == "v" + AssemblyVersion`
-2. **位置正确** —— tag 所指 commit 位于 `installer-release`
-3. **窗口完整性** —— `boundary..HEAD` 之间不得出现非 overlay 作者的 commit
+1. **位置正确** —— `Verify the tag lives on installer-release`：显式 fetch
+   `refs/heads/installer-release`，再用 `git merge-base --is-ancestor` 判断 tag 所指
+   commit 是否在发布分支上。
+2. **版本一致** —— `build.ps1` 校验 `tag == "v" + AssemblyVersion`。
 
-第 3 项将不变式 2「不夹带未打 tag 的上游提交」从**流程约定**升级为**CI 强制门禁**，
-违反时发布直接失败，而非依赖人工自觉。
+两项都是只读的构建期检查，不修改任何 Git 状态。注意第 1 项**必须**在 workflow 里做：
+`main` 的 ruleset 只约束分支推送，看不到 tag 推送。
+
+### 不变式 2 靠人工保障，不设门禁
+
+「不夹带未打 tag 的上游提交」**不做自动校验**。合并窗口的选取、冲突解决与核对
+全部由人工完成，workflow 只负责 CI 与构建发布。
+
+合并后的人工核对命令：
+
+```bash
+# 1. 本次引入的上游提交是否恰好到边界为止
+git log --oneline <上一个边界>..<本次边界>
+
+# 2. 本次窗口的 merge commit
+git log --merges --grep="Merge upstream tag" -1
+
+# 3. 是否混入了未打 tag 的上游提交（应无输出）
+git log --oneline installer-release ^main
+```
+
+> 曾设计过机械门禁（`boundary..HEAD` 的作者白名单），**已移除**。
+> 它只能防住「合并了错的 ref」这一类错误，查不出更主要的**冲突解决错误**——
+> 而后者才是本项目的主要风险。详见 `pitfalls.md`。
 
 ### 产物
 
@@ -310,10 +337,13 @@ dist/v<版本>/SHA256SUMS.txt
 
 | 设置项 | 值 | 原因 |
 |---|---|---|
-| Actions → Workflow permissions | **Read and write** | `codeql.yml` 需要 `security-events: write` |
+| Actions → Workflow permissions | **Read and write** | `codeql.yml` 需要 `security-events: write`；默认只读会让它每周失败 |
 | Ruleset → `main` | 禁止 push | 保证镜像纯净 |
-| Ruleset → `main` | 禁止创建 tag | 保证 tag 只从 `installer-release` 产生 |
-| Ruleset → `main` | 仅允许 fast-forward | 结构上杜绝镜像分叉 |
+| Ruleset → `main` | 禁止创建 tag | tag 只从 `installer-release` 产生 |
+
+Ruleset **没有**「fast-forward only」规则。可用的是 `Restrict pushes`（限制推送者）与
+`Block force pushes`。本地 `branch.main.mergeOptions=--ff-only` 只保护 `git pull`，
+阻止不了把本地 commit 推到 `main` —— 真正的保障是 `Restrict pushes` + §5 的人工流程。
 
 ### 可选项：默认分支
 
@@ -338,7 +368,7 @@ dist/v<版本>/SHA256SUMS.txt
 - ❌ 创建非 `v<数字>.<数字>` 格式的 tag
 - ❌ 在 tag 名中添加 `-setup`、`-installer` 等后缀
 - ❌ 从 `main` 创建 tag
-- ❌ 在未通过 §8 三重门禁时发布
+- ❌ 在未通过 §8 两项门禁时发布
 
 ---
 
@@ -346,19 +376,18 @@ dist/v<版本>/SHA256SUMS.txt
 
 ### 已完成
 
-- [x] 确认 `installer-release` 从 v0.286 边界 `900e6a51` 创建（不含未打 tag 的 `480b07ec`）
+- [x] `installer-release` 从 v0.286 边界 `900e6a51` 创建（不含未打 tag 的 `480b07ec`）
+- [x] Git 基础设施：`upstream` remote、`rerere`、`main` 的 `--ff-only`
+- [x] `app/` overlay 改动（见 §6），提交 `68069125`
+- [x] `installer/GHelper.iss` + `favicon-installer.ico`，VM 实测六项通过
+- [x] `build.ps1`，本地与 CI 共用；CI 已实跑通过
+- [x] `build-installer.yml` / `build-installer-CI.yml`，删除上游 `build.yml` / `release.yml`
+- [x] `.gitignore` 增加 `dist/`（fork 专有条目）
 
 ### 待完成
 
-- [ ] 添加 `upstream` remote
-- [ ] `git config rerere.enabled true`
-- [ ] `main` 配置 `--ff-only`
-- [ ] 落地 `app/` overlay 代码改动（见 §6）
-- [ ] 编写 `installer/build.ps1` 与 `installer/GHelper.iss`
-- [ ] 编写 `build-installer.yml` / `build-installer-CI.yml`
-- [ ] 删除上游 `build.yml` / `release.yml`
-- [ ] 配置 GitHub 仓库设置（见 §9）
 - [ ] 首次 `v0.286` 发布
+- [ ] 配置 GitHub 仓库设置（见 §9）：Actions 权限、`main` Ruleset
 
 ---
 
@@ -372,11 +401,11 @@ git log main --format=%H --grep="^Version bump$"
 git merge-base --is-ancestor <sha> HEAD && echo "已合并" || echo "待合并"
 
 # 合并一个窗口
-git merge --no-ff --no-edit -m "Merge upstream v0.287 (2ca868a0)" <sha>
+git merge --no-ff --no-edit -m "Merge upstream tag v0.287 (2ca868a0)" <sha>
 
-# 查看发布审计日志
-git log --merges --grep="Merge upstream"
+# 查看发布审计日志（必须带 "tag" 一词，否则会命中上游自带的 merge commit）
+git log --merges --grep="Merge upstream tag"
 
-# 确认某 tag 未夹带上游未发布提交
-git log --oneline main ^HEAD
+# 确认 installer-release 未夹带上游未发布提交（应无输出）
+git log --oneline installer-release ^main
 ```
