@@ -101,9 +101,9 @@ jobs:
           "path=$($iscc.FullName)" >> $env:GITHUB_OUTPUT
           Write-Host "ISCC: $($iscc.FullName)"
 
-      # build.ps1 rejects a tag that does not match AssemblyVersion, which is the
-      # one release gate we keep. The gate for "the tag must live on
-      # installer-release" is enforced by the branch ruleset instead.
+      # build.ps1 rejects a tag that does not match AssemblyVersion. The second
+      # gate, "the tag must live on installer-release", is enforced by the step
+      # above, not by the branch ruleset, which cannot see tag pushes at all.
       - name: Build
         id: build
         shell: pwsh
