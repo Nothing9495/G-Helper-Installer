@@ -140,12 +140,14 @@ jobs:
         shell: pwsh
         run: |
           $tag = '${{ steps.tag.outputs.value }}'
-          $exe = if (${{ steps.sign.outputs.outcome }} -eq 'success') {
-            '.\signed\GHelper-' + "$tag" + '-Setup.exe'
-          } else {
-            '.\dist\GHelper-' + "$tag" + '-Setup.exe'
-          }
-          if (-not (Test-Path $exe)) { throw "Signed installer not found at $exe" }
+          # Pick the signed copy by probing for the file, not by testing the sign
+          # step's outcome. When SIGNPATH_API_TOKEN is absent that step is skipped
+          # and its outcome interpolates to an empty string, which would leave the
+          # line below as `if ( -eq 'success')` and fail to parse.
+          $signed = '.\signed\GHelper-' + "$tag" + '-Setup.exe'
+          $exe = if (Test-Path $signed) { $signed } else { '.\dist\GHelper-' + "$tag" + '-Setup.exe' }
+          Write-Host "Checksumming $exe"
+          if (-not (Test-Path $exe)) { throw "Installer not found at $exe" }
           Copy-Item $exe '.\dist\' -Force
           $hash = (Get-FileHash -Algorithm SHA256 '.\dist\GHelper-' + "$tag" + '-Setup.exe').Hash.ToLower()
           "$hash  $tag-Setup.exe" | Set-Content -Encoding ASCII '.\dist\SHA256SUMS.txt'
