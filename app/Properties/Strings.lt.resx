@@ -779,6 +779,9 @@ Vis tiek norite tęsti?</value>
   <data name="ReadLimits" xml:space="preserve">
     <value>Skaityti ribas</value>
   </data>
+  <data name="RearLight" xml:space="preserve">
+    <value>Galinis apšvietimas</value>
+  </data>
   <data name="Reset" xml:space="preserve">
     <value>Atstatyti</value>
   </data>
@@ -856,6 +859,9 @@ Vis tiek norite tęsti?</value>
   </data>
   <data name="ToggleScreen" xml:space="preserve">
     <value>Perjungti ekraną</value>
+  </data>
+  <data name="ToggleTouchpad" xml:space="preserve">
+    <value>Toggle Touchpad</value>
   </data>
   <data name="ToggleTouchscreen" xml:space="preserve">
     <value>Valdyti jutiklinį ekraną</value>

@@ -779,6 +779,9 @@ Folytatni szeretnéd?</value>
   <data name="ReadLimits" xml:space="preserve">
     <value>Korlátok beolvasása</value>
   </data>
+  <data name="RearLight" xml:space="preserve">
+    <value>Hátsó világítás</value>
+  </data>
   <data name="Reset" xml:space="preserve">
     <value>Visszaállítás</value>
   </data>
@@ -856,6 +859,9 @@ Folytatni szeretnéd?</value>
   </data>
   <data name="ToggleScreen" xml:space="preserve">
     <value>Képernyő ki-/bekapcsolása</value>
+  </data>
+  <data name="ToggleTouchpad" xml:space="preserve">
+    <value>Érintőpad kapcsoló</value>
   </data>
   <data name="ToggleTouchscreen" xml:space="preserve">
     <value>Érintőképernyő ki-/bekapcsolása</value>

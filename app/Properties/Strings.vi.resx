@@ -779,6 +779,9 @@ Bạn có muốn tiếp tục không?</value>
   <data name="ReadLimits" xml:space="preserve">
     <value>Đọc giới hạn</value>
   </data>
+  <data name="RearLight" xml:space="preserve">
+    <value>Đèn mặt sau</value>
+  </data>
   <data name="Reset" xml:space="preserve">
     <value>Đặt lại</value>
   </data>
@@ -856,6 +859,9 @@ Bạn có muốn tiếp tục không?</value>
   </data>
   <data name="ToggleScreen" xml:space="preserve">
     <value>Bật tắt màn hình</value>
+  </data>
+  <data name="ToggleTouchpad" xml:space="preserve">
+    <value>Toggle Touchpad</value>
   </data>
   <data name="ToggleTouchscreen" xml:space="preserve">
     <value>Toggle Touchscreen</value>

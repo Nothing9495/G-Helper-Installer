@@ -483,6 +483,7 @@ namespace GHelper.Peripherals
             DetectMouse(new GladiusIIOriginPink());
             DetectMouse(new GladiusIIOriginCOD());
             DetectMouse(new GladiusII());
+            DetectMouse(new GladiusIICore());
             DetectMouse(new GladiusIIWireless());
             DetectMouse(new KerisWireless());
             DetectMouse(new KerisWirelessWired());
@@ -587,6 +588,7 @@ namespace GHelper.Peripherals
             DetectHeadset(new CetraSpeedNova());
             DetectHeadset(new Clavis());
             DetectHeadset(new CetraRgb());
+            DetectHeadset(new StrixGo24());
         }
 
         public static void DetectHeadset(AsusHeadset hs)
