@@ -165,6 +165,12 @@ namespace GHelper.Peripherals
             ForEachAsync(ConnectedKeyboards, kb => kb.SyncFromLaptopAura(), "Failed to sync with laptop aura");
         }
 
+        public static void RestoreKeyboardLighting()
+        {
+            if (IsKeyboardAuraSync) return;
+            ForEachAsync(ConnectedKeyboards, kb => { if (kb.GetType() == typeof(StrixScopeII) && kb.HasTransientLighting) kb.ApplyStoredLighting(); }, "Failed to restore lighting");
+        }
+
         public static void RefreshBatteryForAllDevices(bool force)
         {
             //Polling the battery every 20s should be enough
@@ -504,6 +510,7 @@ namespace GHelper.Peripherals
             DetectMouse(new HarpeAceAimLabEditionWired());
             DetectMouse(new HarpeAceExtremeWeird());
             DetectMouse(new HarpeAceMiniWired());
+            DetectMouse(new HarpeMiniCore());
             DetectMouse(new HarpeIIAceWired());
             DetectMouse(new TUFM3());
             DetectMouse(new TUFM3GenII());
@@ -587,6 +594,7 @@ namespace GHelper.Peripherals
             DetectHeadset(new Pelta());
             DetectHeadset(new CetraSpeedNova());
             DetectHeadset(new Clavis());
+            DetectHeadset(new DeltaS());
             DetectHeadset(new CetraRgb());
             DetectHeadset(new StrixGo24());
         }
