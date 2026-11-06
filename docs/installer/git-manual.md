@@ -4,6 +4,132 @@
 >
 > 适用范围：`installer-release` 分支上的开发、上游同步、打 tag 与发布。
 > `main` 分支不在开发范围内，仅作为上游镜像。
+>
+> **日常操作先看 §0「合并与发布速查」；原理与约束见后续章节。**
+
+---
+
+## 0. 合并与发布速查（先看这里）
+
+> 目标：把 `main` 上的一个 `Version bump` 边界合并进 `installer-release` 并发布。
+> 最关键的一条：**merge 的第二父必须是边界 commit，绝不能是 `main` 的 HEAD。**
+> 操作前先 `git status` 确认工作区干净；第 1 步在 `main`，第 3 步切回 `installer-release`。
+
+### 0.1 正常流程
+
+**1. 更新 `main` 镜像（只允许 fast-forward）**
+
+```powershell
+git switch main
+git fetch upstream --no-tags   # 未配置 upstream 时见 §1
+git merge --ff-only upstream/main
+git push origin main
+```
+
+**2. 找本次边界，确认版本号**
+
+```powershell
+git log main --format="%H %s" --grep="^Version bump$" -1
+
+$BOUNDARY = "<上一条输出的完整 SHA>"
+$VERSION  = "X.Y"           # 必须等于 AssemblyVersion
+git show "${BOUNDARY}:app/GHelper.csproj" | Select-String AssemblyVersion
+```
+
+**3. 确认边界尚未合并**
+
+```powershell
+git switch installer-release
+git merge-base --is-ancestor $BOUNDARY HEAD
+```
+
+`$LASTEXITCODE -eq 0` = 已合并，停止；`-ne 0` = 待合并，继续。若为 `128`，说明 `$BOUNDARY` 不是有效 commit，检查 SHA 是否粘全。
+
+**4. 合并边界**
+
+```powershell
+git merge --no-ff --no-edit -m "Merge upstream tag v$VERSION ($($BOUNDARY.Substring(0,8)))" $BOUNDARY
+```
+
+- 冲突：解决后 `git add <files>` + `git commit`。
+- 上游 `build.yml` / `release.yml` 保持删除，见 §6。
+- 跨多个版本：可直接 merge 最新边界，git 会带入中间边界，见 §5「跳过中间版本」。
+
+**5. 验证（三项都通过才继续）**
+
+```powershell
+# 定位本次 merge
+$MERGE = git log --merges --grep="Merge upstream tag" -1 --format=%H
+if (-not $MERGE) { throw "找不到本次 merge，检查提交信息是否含 'Merge upstream tag'" }
+
+# 父提交：第一个是合并前的 HEAD，第二个必须是 $BOUNDARY
+git rev-list --parents -n 1 $MERGE
+
+# main 的 HEAD 不能是该 merge 的祖先；exit 1 才正常
+git merge-base --is-ancestor main $MERGE
+if ($LASTEXITCODE -eq 0) { throw "main HEAD 混入了 installer-release" }
+
+# 版本号与 tag 一致
+.\build.ps1 -Tag "v$VERSION"
+```
+
+**6. 推分支，再打 tag**
+
+```powershell
+git push origin installer-release
+
+git tag -a "v$VERSION" -m "G-Helper Installer v$VERSION (upstream $($BOUNDARY.Substring(0,8)))"
+git push origin "v$VERSION"
+```
+
+> tag 的 commit 必须在 `installer-release` 上，且包含本次 merge。默认打在 merge commit；
+> 若 merge 后有发布修复，提交并重新构建后打在最后一个修复 commit。
+> 顺序不可反：tag 必须通过 `build-installer.yml` 的「tag 在 installer-release 上」检查，因此先推分支。
+> 禁止：merge `main` HEAD、cherry-pick 上游 commit、`git fetch --tags`、在 `main` 上 commit/tag。完整清单见 §10。
+
+### 0.2 误操作补救（已 push 也必须重写）
+
+适用：误 merge 了 `main` HEAD、cherry-pick 了上游提交，或 tag 打在了错误历史。
+核心：**回到误操作前的 HEAD，重新 merge 正确边界，再用 `--force-with-lease` 重写。**
+以下命令必须在 `installer-release` 上执行（`git switch installer-release` 后确认 `git status` 干净）。
+
+```powershell
+# 1) 定位：<BAD_HEAD> 是当前坏历史，<GOOD_HEAD> 是误操作前的正常 HEAD
+git log --oneline --first-parent -10
+$BAD_HEAD  = "<当前坏历史 HEAD 完整 SHA>"
+$GOOD_HEAD = "<误操作前的正常 HEAD 完整 SHA>"
+$BOUNDARY  = "<要重新合并的边界完整 SHA>"
+$VERSION   = "X.Y"
+
+# 2) 备份坏历史
+git branch backup/installer-release-bad-YYYYMMDD $BAD_HEAD
+
+# 3) 重置并重新合并
+git reset --hard $GOOD_HEAD
+git merge --no-ff --no-edit -m "Merge upstream tag v$VERSION ($($BOUNDARY.Substring(0,8)))" $BOUNDARY
+
+# 4) 验证（同 §0.1 第 5 步）
+$MERGE = git log --merges --grep="Merge upstream tag" -1 --format=%H
+if (-not $MERGE) { throw "找不到本次 merge，检查提交信息是否含 'Merge upstream tag'" }
+git rev-list --parents -n 1 $MERGE
+git merge-base --is-ancestor main $MERGE
+if ($LASTEXITCODE -eq 0) { throw "main HEAD 混入了 installer-release" }
+
+# 5) 重写远端；先确认远端 HEAD 仍是 $BAD_HEAD
+git push "--force-with-lease=refs/heads/installer-release:$BAD_HEAD" origin installer-release
+
+# 6) 仅当坏历史上已有 tag 时执行；没有则跳过本段
+git push origin --delete "v$VERSION"
+git tag -d "v$VERSION"
+git tag -a "v$VERSION" -m "G-Helper Installer v$VERSION (upstream $($BOUNDARY.Substring(0,8)))"
+git push origin "v$VERSION"
+```
+
+- **不要用 `git revert` 补救**：`main` 仍会留在祖先链，且 `$BOUNDARY` 会变成「已合并」，之后无法再用正常 merge 引入该窗口。
+- `<GOOD_HEAD>` 取误操作前的 `installer-release` HEAD；若之前还有正常的 installer 自有提交，取最后一个正常提交。
+- `--force-with-lease` 在远端被他人更新时会拒绝覆盖；执行前确认远端 HEAD 仍是 `$BAD_HEAD`。
+- 若远端拒绝 force-push，检查 `installer-release` 的 ruleset / branch protection；本项目只在 `main` 上设限制（§9）。
+- 先推分支，再推 tag。其他 clone 需先 `git fetch origin`，再 `git reset --hard origin/installer-release`。
 
 ---
 
@@ -19,6 +145,13 @@
 ```
 upstream → https://github.com/seerge/g-helper.git     （唯一的上游来源）
 origin   → Nothing9495/G-Helper-Installer
+```
+
+若本机尚未配置 `upstream`（从 fork clone 下来通常只有 `origin`）：
+
+```powershell
+git remote add upstream https://github.com/seerge/g-helper.git
+git config remote.upstream.tagOpt --no-tags
 ```
 
 ---
@@ -40,8 +173,8 @@ origin   → Nothing9495/G-Helper-Installer
 以当前仓库为例：
 
 ```
-main:              ○──○──● 900e6a51 "Version bump"  ← 上游 v0.286 边界，可合并
-                      └──○ 480b07ec "Crowdin updates"  ← 未打 tag，禁止合并
+main:              ○──○──● f62d584d "Version bump"  ← 上游 v0.291 边界，可合并
+                      └──○ 8dc2b614 "Readme updates" ← v0.291 之后，禁止合并
 ```
 
 ### 不变式 3 —— 不获取上游 tag
@@ -71,7 +204,7 @@ git log main --format="%H" --grep="^Version bump$" | ForEach-Object {
 
 输出即完整的「版本号 → SHA」映射表。使用 `AssemblyVersion` 而非提交信息作为版本号来源，因此不依赖提交信息格式的稳定性。
 
-只覆盖**本地 `main` 已知**的边界。要纳入尚未 fetch 的上游版本，先 `git fetch upstream && git merge --ff-only upstream/main`。
+只覆盖**本地 `main` 已知**的边界。要纳入尚未 fetch 的上游版本，先 `git fetch upstream --no-tags`，再 `git merge --ff-only upstream/main`。
 
 示例输出：
 
@@ -114,8 +247,8 @@ v<版本号>      例：v0.286
 ### 三条规则
 
 1. **来源唯一** —— tag 只能从 `installer-release` 的 commit 创建。**禁止**在 `main` 或上游创建 tag。
-2. **对象唯一** —— 本地仅 `refs/tags/vX.Y` 指向我们自己的 merge commit。
-3. **天然对齐** —— tag 落在窗口边界上，版本号与上游严格对应。
+2. **对象唯一** —— 本地仅 `refs/tags/vX.Y` 指向 `installer-release` 上包含本次 merge 的发布 commit（默认即 merge commit；若有发布修复，则是最后一个修复 commit）。
+3. **天然对齐** —— tag 必须包含窗口边界的 merge commit，版本号与上游严格对应。
 
 ### 创建方式
 
@@ -136,7 +269,7 @@ git push origin v0.286        # 触发 build-installer.yml
 
 ```bash
 git checkout main
-git fetch upstream
+git fetch upstream --no-tags
 git merge --ff-only upstream/main
 git push origin main
 ```
@@ -176,7 +309,7 @@ git merge --no-ff --no-edit \
 ### ④ 本地验证
 
 ```powershell
-./installer/build.ps1 -Tag v0.288
+.\build.ps1 -Tag v0.288
 ```
 
 与 CI 使用**同一脚本**，确保本地验证与发布产物同源。
@@ -188,6 +321,9 @@ git push origin installer-release
 git tag -a v0.288 -m "G-Helper Installer v0.288 (upstream 2ca868a0)"
 git push origin v0.288
 ```
+
+> 先推分支再推 tag。tag 的 commit 必须在 `installer-release` 上且包含本次 merge；
+> 默认打在 merge commit，有发布修复则打在最后一个修复 commit。
 
 ---
 
@@ -309,11 +445,12 @@ git commit
 # 1. 本次引入的上游提交是否恰好到边界为止
 git log --oneline <上一个边界>..<本次边界>
 
-# 2. 本次窗口的 merge commit
-git log --merges --grep="Merge upstream tag" -1
+# 2. 新 merge 的父提交：第一个是合并前的 HEAD，第二个必须是本次边界
+MERGE=$(git log --merges --grep="Merge upstream tag" -1 --format=%H)
+git rev-list --parents -n 1 "$MERGE"
 
-# 3. 是否混入了未打 tag 的上游提交（应无输出）
-git log --oneline installer-release ^main
+# 3. main 的 HEAD 不能是该 merge 的祖先（exit 1 才正常）
+git merge-base --is-ancestor main "$MERGE"
 ```
 
 > 曾设计过机械门禁（`boundary..HEAD` 的作者白名单），**已移除**。
@@ -383,10 +520,11 @@ Ruleset **没有**「fast-forward only」规则。可用的是 `Restrict pushes`
 - [x] `build.ps1`，本地与 CI 共用；CI 已实跑通过
 - [x] `build-installer.yml` / `build-installer-CI.yml`，删除上游 `build.yml` / `release.yml`
 - [x] `.gitignore` 增加 `dist/`（fork 专有条目）
+- [x] v0.286 / v0.288 / v0.291 已合并并打 tag
 
 ### 待完成
 
-- [ ] 首次 `v0.286` 发布
+- [ ] 下一个上游窗口（v0.292）的合并与发布
 - [ ] 配置 GitHub 仓库设置（见 §9）：Actions 权限、`main` Ruleset
 
 ---
@@ -406,6 +544,10 @@ git merge --no-ff --no-edit -m "Merge upstream tag v0.287 (2ca868a0)" <sha>
 # 查看发布审计日志（必须带 "tag" 一词，否则会命中上游自带的 merge commit）
 git log --merges --grep="Merge upstream tag"
 
-# 确认 installer-release 未夹带上游未发布提交（应无输出）
-git log --oneline installer-release ^main
+# 定位本次 merge 并核对父提交（第二父 = 边界 SHA）
+MERGE=$(git log --merges --grep="Merge upstream tag" -1 --format=%H)
+git rev-list --parents -n 1 "$MERGE"
+
+# 确认 main 的 HEAD 不是该 merge 的祖先（exit 1 才正常）
+git merge-base --is-ancestor main "$MERGE"
 ```

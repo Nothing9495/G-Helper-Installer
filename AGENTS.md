@@ -30,7 +30,7 @@ Inno Setup 安装程序、自包含打包与 GitHub Actions 发布。上游代�
 ### 同步上游
 
 ```powershell
-git checkout main; git fetch upstream; git merge --ff-only upstream/main; git push origin main
+git checkout main; git fetch upstream --no-tags; git merge --ff-only upstream/main; git push origin main
 git checkout installer-release
 git log main --format=%H --grep="^Version bump$"   # 列出所有版本边界
 git merge --no-ff --no-edit -m "Merge upstream tag v0.287 (2ca868a0)" <边界SHA>
@@ -64,8 +64,10 @@ git log main --format=%H --grep="^Version bump$" | ForEach-Object {
 
 ### 合并后的人工核对
 
-```bash
-git log --oneline installer-release ^main    # 有输出=夹带了未打 tag 的上游提交
+```powershell
+$MERGE = git log --merges --grep="Merge upstream tag" -1 --format=%H
+git rev-list --parents -n 1 $MERGE            # 第二父必须 = 本次边界 SHA
+git merge-base --is-ancestor main $MERGE      # exit 1=正常；exit 0=main HEAD 已混入
 ```
 
 `git rev-list --merges -1` 会命中**上游自带**的 merge commit，审计窗口时必须用
