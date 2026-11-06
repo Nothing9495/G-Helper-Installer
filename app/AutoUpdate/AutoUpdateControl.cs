@@ -185,7 +185,11 @@ namespace GHelper.AutoUpdate
                     {
                         UseShellExecute = true,
                         Verb = "runas",
-                        WorkingDirectory = exeDir
+                        WorkingDirectory = exeDir,
+                        // /SILENT keeps Inno's progress window (and its Cancel button)
+                        // visible. --autoupdate is the installer's own signal, separate
+                        // from Inno's silent mode.
+                        Arguments = "/SILENT /NORESTART --autoupdate"
                     });
                 }
                 catch (Exception ex)
