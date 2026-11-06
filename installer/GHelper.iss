@@ -86,8 +86,10 @@ chinesesimplified.StartupTaskFailed=G-Helper 未能确认开机启动任务已�
 chinesesimplified.UOptionsRestoreSvc=G-Helper 可以重新启用并启动它曾禁用的 ASUS 服务。是否在移除前执行？
 chinesesimplified.UOptionsDeleteConfig=是否删除 G-Helper 的全部设置与日志，包括用户目录与 ProgramData 下的文件？
 
-; Only autostart is selected on a fresh install; the rest are explicitly off so a
-; silent install never disables services, opens a browser or adds a shortcut.
+; Only autostart is selected on a fresh install. The other three are explicitly
+; off, and PrepareToInstall force-deselects them for every silent run (including
+; the --autoupdate path), so an unattended install never disables services,
+; opens a browser or adds a desktop shortcut.
 [Tasks]
 Name: "autostart";   Description: "{cm:TAddStartup}";  GroupDescription: "{cm:TAdditional}"; Flags: checkedonce
 Name: "disablesvc";  Description: "{cm:TDisableSvc}";  Flags: unchecked
@@ -106,9 +108,10 @@ Name: "{autodesktop}\{#MyAppName}";  Filename: "{app}\{#MyAppExe}"; Tasks: deskt
 
 [Run]
 ; postinstall puts this on the Finished page, unambiguously after CurStepChanged,
-; so it cannot race task creation. skipifsilent keeps /SILENT from popping the
-; tray icon. nowait because G-Helper never exits on its own.
-Filename: "{app}\{#MyAppExe}"; Description: "{cm:TRunNow}"; Flags: nowait postinstall skipifsilent
+; so it cannot race task creation. ShouldRunGHelper keeps ordinary /SILENT from
+; popping the tray icon but allows --autoupdate to relaunch G-Helper. nowait
+; because G-Helper never exits on its own.
+Filename: "{app}\{#MyAppExe}"; Description: "{cm:TRunNow}"; Flags: nowait postinstall; Check: ShouldRunGHelper
 
 [Code]
 
@@ -120,6 +123,32 @@ begin
     trusting G-Helper to report its own success. }
   Result := Exec(ExpandConstant('{app}\{#MyAppExe}'), Params, ExpandConstant('{app}'),
     SW_HIDE, ewWaitUntilTerminated, Code);
+end;
+
+{ G-Helper passes this alongside /SILENT. It is separate from WizardSilent so
+  ordinary unattended installs can keep their existing no-relaunch behaviour. }
+function IsAutoUpdate: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '--autoupdate') = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+{ Both auto-update and plain Inno silent runs must leave the optional tasks alone. }
+function SkipOptionalTasks: Boolean;
+begin
+  Result := IsAutoUpdate or WizardSilent;
+end;
+
+function ShouldRunGHelper: Boolean;
+begin
+  Result := (not WizardSilent) or IsAutoUpdate;
 end;
 
 function GHelperTaskExists: Boolean;
@@ -146,6 +175,11 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
+  { One guard for every silent path: PrepareToInstall runs before [Icons] and
+    ssPostInstall, so the later WizardIsTaskSelected checks see the cleared state. }
+  if SkipOptionalTasks then
+    WizardSelectTasks('!disablesvc,!pawnio,!desktopicon');
+
   StopRunningGHelper;
   Result := '';  { non empty would abort Setup and show that text }
 end;
